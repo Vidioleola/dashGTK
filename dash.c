@@ -64,17 +64,49 @@ GtkWidget *label_AMS_Errors_Value;
 GtkWidget *label_Inverters_Errors;
 GtkWidget *label_Inverters_Errors_Value;
 
-void updateMotorFromCan(uint8_t motorNumber, uint8_t *dat);
-void updateMotorGUI();
-
 static gboolean handleGui(gpointer userdata);
 
-// called when window is closed
-void on_window_main_destroy()
-{
-    gtk_main_quit();
-}
+void on_window_main_destroy();
+void *startGUI(void *ptr);
 
+void updateMotorFromCan(uint8_t motorNumber, uint8_t *dat);
+void updateMotorGUI();
+void updateAMSErrorsGUI(uint32_t id, size_t len, uint8_t *dat);
+void updateAMSVoltageGUI(uint32_t id, size_t len, uint8_t *dat);
+void updateAMSTemperatureGUI(uint32_t id, size_t len, uint8_t *dat);
+void updateTimerGUI(uint32_t id, size_t len, uint8_t *dat);
+
+bool rics_init(void)
+{
+    printf("Init from dynlib\n");
+    if (!pthread_create(&tId, NULL, startGUI, NULL))
+    {
+        printf("Thread created\n");
+    }
+    else
+    {
+        printf("Thread creation failed\n");
+        return false;
+    }
+    return true;
+}
+bool rics_start(int32_t node)
+{
+    printf("Start from dynlib\n");
+    return true;
+}
+bool rics_can_callback(uint32_t id, size_t len, uint8_t *dat)
+{
+    ricsData_t *data = (ricsData_t *)malloc(sizeof(ricsData_t));
+    uint8_t *newData = (uint8_t *)malloc(sizeof(uint8_t) * len);
+    memcpy(newData, dat, len);
+    data->dat = newData;
+    data->id = id;
+    data->len = len;
+    gdk_threads_add_idle(handleGui, data); //important, all calls MUST be from same thread for GTK, hence this fonction
+
+    return true;
+}
 void *startGUI(void *ptr)
 {
     for (int i = 0; i < N_MOTORS; i++)
@@ -91,7 +123,7 @@ void *startGUI(void *ptr)
     window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_default_size(GTK_WINDOW(window), WINDOW_W, WINDOW_H);
     gtk_window_resize(GTK_WINDOW(window), WINDOW_W, WINDOW_H);
-    //gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
     gtk_window_set_title(GTK_WINDOW(window), "DASH FormUL 2021");
     g_signal_connect(window, "destroy", G_CALLBACK(on_window_main_destroy), NULL);
 
@@ -150,37 +182,9 @@ void *startGUI(void *ptr)
     printf("_______________________ END OF GUI THREAD _____________________________\n");
     pthread_exit(NULL);
 }
-
-bool rics_init(void)
+void on_window_main_destroy()
 {
-    printf("Init from dynlib\n");
-    if (!pthread_create(&tId, NULL, startGUI, NULL))
-    {
-        printf("Thread created\n");
-    }
-    else
-    {
-        printf("Thread creation failed\n");
-        return false;
-    }
-    return true;
-}
-bool rics_start(int32_t node)
-{
-    printf("Start from dynlib\n");
-    return true;
-}
-bool rics_can_callback(uint32_t id, size_t len, uint8_t *dat)
-{
-    ricsData_t *data = (ricsData_t *)malloc(sizeof(ricsData_t));
-    uint8_t *newData = (uint8_t *)malloc(sizeof(uint8_t) * len);
-    memcpy(newData, dat, len);
-    data->dat = newData;
-    data->id = id;
-    data->len = len;
-    gdk_threads_add_idle(handleGui, data); //important, all calls MUST be from same thread for GTK, hence this fonction
-
-    return true;
+    gtk_main_quit();
 }
 static gboolean handleGui(gpointer userdata)
 {
@@ -198,82 +202,24 @@ static gboolean handleGui(gpointer userdata)
 
     if ((id & 0xFFFF0000) == 0x02070000)
     {
-        uint64_t err = 0;
-        for (int i = 0; i < 8; i++)
-        {
-            err += (dat[i] << (8 * (7 - i)));
-        }
-        snprintf(tmpBuffer, sizeof(tmpBuffer), "0x%08X", err);
-        gtk_label_set_text(GTK_LABEL(label_AMS_Errors_Value), tmpBuffer);
+        updateAMSErrorsGUI(id, len, dat);
     }
 
     if (id == 0x0000000C)
     {
-        snprintf(tmpBuffer, sizeof(tmpBuffer), "%c%c%c%c%c%c%c%c", dat[0], dat[1], dat[2], dat[3], dat[4], dat[5], dat[6], dat[7]);
-        gtk_label_set_text(GTK_LABEL(label_Time), tmpBuffer);
+        updateTimerGUI(id, len, dat);
     }
 
     if ((id & 0xFFFF0000) == 0x02020000)
     {
-        int startix = (id & 0xFF00) / 0x100;
-        for (int i = 1; i < 9; i++)
-        {
-            int cell = (8 * startix + i - 1) % 20;
-            int seg = (8 * startix + i - 1) / 20;
-            Accumulator.segments[seg].cells[cell].voltage = 0.02 * dat[i - 1];
-        }
-        double voltageMoy = 0;
-        int nCells = 0;
-        for (int i = 0; i < N_SEGMENTS; i++)
-        {
-            for (int j = 0; j < N_CELLS_PER_SEGMENT; j++)
-            {
-                if (Accumulator.segments[i].cells[j].voltage > 0)
-                {
-                    nCells++;
-                    voltageMoy += Accumulator.segments[i].cells[j].voltage;
-                }
-            }
-        }
-        double bpVoltage = voltageMoy;
-        if (nCells > 0)
-            voltageMoy /= nCells;
-
-        snprintf(tmpBuffer, sizeof(tmpBuffer), "%5.2f V ~ %6.2f V", bpVoltage, voltageMoy);
-        gtk_label_set_text(GTK_LABEL(label_Voltage_Value), tmpBuffer);
+        updateAMSVoltageGUI(id, len, dat);
     }
-    
+
     if ((id & 0xFFFF0000) == 0x02030000)
     {
-        int startix = (id & 0xFF00) / 0x100;
-        for (int i = 1; i < 9; i++)
-        {
-            int cell = 1 + (8 * startix + i - 1) % 32;
-            int seg = 1 + (8 * startix + i - 1) / 32;
-            Accumulator.segments[seg].cells[cell].temperature = dat[i - 1];
-        }
-
-        double tempMoy = 0;
-        int nCells = 0;
-        for (int i = 0; i < N_SEGMENTS; i++)
-        {
-            for (int j = 0; j < N_CELLS_PER_SEGMENT; j++)
-            {
-                double value = Accumulator.segments[i].cells[j].temperature;
-                if (value > 0 & value < 150)
-                {
-                    nCells++;
-                    tempMoy += value;
-                }
-            }
-        }
-        if (nCells > 0)
-            tempMoy /= nCells;
-
-        snprintf(tmpBuffer, sizeof(tmpBuffer), "%6.2f \u2103", tempMoy);
-        gtk_label_set_text(GTK_LABEL(label_Temperature_Value), tmpBuffer);
+        updateAMSTemperatureGUI(id, len, dat);
     }
-    
+
     free(dat);
     return G_SOURCE_REMOVE;
 }
@@ -325,4 +271,95 @@ void updateMotorGUI()
     }
     gisa_gauge_set_value(GISA_GAUGE(gauge), floor(rmpMoy));
     gtk_label_set_text(GTK_LABEL(label_Inverters_Errors_Value), invertersErrorsBuffer);
+}
+void updateAMSErrorsGUI(uint32_t id, size_t len, uint8_t *dat)
+{
+    uint64_t err = 0;
+    for (int i = 0; i < 8; i++)
+    {
+        err += (dat[i] << (8 * (7 - i)));
+    }
+    snprintf(tmpBuffer, sizeof(tmpBuffer), "0x%08X", err);
+    gtk_label_set_text(GTK_LABEL(label_AMS_Errors_Value), tmpBuffer);
+}
+void updateAMSVoltageGUI(uint32_t id, size_t len, uint8_t *dat)
+{
+    int startix = (id & 0xFF00) / 0x100;
+    for (int i = 1; i < 9; i++)
+    {
+        int cell = (8 * startix + i - 1) % 20;
+        int seg = (8 * startix + i - 1) / 20;
+        Accumulator.segments[seg].cells[cell].voltage = 0.02 * dat[i - 1];
+    }
+    double voltageMoy = 0;
+    double max = 0;
+    double min = 4.5;
+    int nCells = 0;
+    for (int i = 0; i < N_SEGMENTS; i++)
+    {
+        for (int j = 0; j < N_CELLS_PER_SEGMENT; j++)
+        {
+            double voltageValue = Accumulator.segments[i].cells[j].voltage;
+            if (voltageValue > 0)
+            {
+                if (voltageValue > max)
+                    max = voltageValue;
+                if (voltageValue < min)
+                    min = voltageValue;
+
+                nCells++;
+                voltageMoy += voltageValue;
+            }
+        }
+    }
+    double bpVoltage = voltageMoy;
+    if (nCells > 0)
+        voltageMoy /= nCells;
+
+    snprintf(tmpBuffer, sizeof(tmpBuffer), "%5.2f V ~ %6.2f V\n%6.2f ~ %6.2f",
+             bpVoltage, voltageMoy, max, min);
+    gtk_label_set_text(GTK_LABEL(label_Voltage_Value), tmpBuffer);
+}
+void updateAMSTemperatureGUI(uint32_t id, size_t len, uint8_t *dat)
+{
+    int startix = (id & 0xFF00) / 0x100;
+    for (int i = 1; i < 9; i++)
+    {
+        int cell = 1 + (8 * startix + i - 1) % 32;
+        int seg = 1 + (8 * startix + i - 1) / 32;
+        Accumulator.segments[seg].cells[cell].temperature = dat[i - 1];
+    }
+
+    double tempMoy = 0;
+    float min = 255;
+    float max = 0;
+    int nCells = 0;
+    for (int i = 0; i < N_SEGMENTS; i++)
+    {
+        for (int j = 0; j < N_CELLS_PER_SEGMENT; j++)
+        {
+            double value = Accumulator.segments[i].cells[j].temperature;
+            if (value > 0 & value < 150)
+            {
+                if (value > max)
+                    max = value;
+                if (value < min)
+                    min = value;
+
+                nCells++;
+                tempMoy += value;
+            }
+        }
+    }
+    if (nCells > 0)
+        tempMoy /= nCells;
+
+    snprintf(tmpBuffer, sizeof(tmpBuffer), "%6.2f \u2103 \n%6.2f ~ %6.2f",
+             tempMoy, max, min);
+    gtk_label_set_text(GTK_LABEL(label_Temperature_Value), tmpBuffer);
+}
+void updateTimerGUI(uint32_t id, size_t len, uint8_t *dat)
+{
+    snprintf(tmpBuffer, sizeof(tmpBuffer), "%c%c%c%c%c%c%c%c", dat[0], dat[1], dat[2], dat[3], dat[4], dat[5], dat[6], dat[7]);
+    gtk_label_set_text(GTK_LABEL(label_Time), tmpBuffer);
 }
