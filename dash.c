@@ -13,6 +13,17 @@
 #define N_CELLS_PER_SEGMENT 100
 #define N_SEGMENTS 6
 
+#define N_MESSAGES_LINES 3
+#define LINE_MAX_LEN 8
+
+typedef struct
+{
+    char lines[N_MESSAGES_LINES][LINE_MAX_LEN + 1];
+    uint8_t idx;
+} MessagesValue_t;
+
+MessagesValue_t messages;
+
 char tmpBuffer[128];
 
 typedef struct
@@ -75,6 +86,7 @@ void updateAMSErrorsGUI(uint32_t id, size_t len, uint8_t *dat);
 void updateAMSVoltageGUI(uint32_t id, size_t len, uint8_t *dat);
 void updateAMSTemperatureGUI(uint32_t id, size_t len, uint8_t *dat);
 void updateTimerGUI(uint32_t id, size_t len, uint8_t *dat);
+void updateMessagesGUI(uint32_t id, size_t len, uint8_t *dat);
 
 bool rics_init(void)
 {
@@ -109,6 +121,7 @@ bool rics_can_callback(uint32_t id, size_t len, uint8_t *dat)
 }
 void *startGUI(void *ptr)
 {
+    //reset globals
     for (int i = 0; i < N_MOTORS; i++)
     {
         motors[i].rpm = 0;
@@ -116,6 +129,13 @@ void *startGUI(void *ptr)
         motors[i].error_overspeed = false;
         motors[i].error_sincos = false;
     }
+    for (int i = 0; i < N_MESSAGES_LINES; i++)
+    {
+        memset(messages.lines[i], 0, sizeof(char));
+    }
+    messages.idx = 0;
+
+    //init gui
 
     gtk_init(NULL, NULL);
     GError *err = NULL;
@@ -140,7 +160,7 @@ void *startGUI(void *ptr)
     gtk_grid_attach(GTK_GRID(mainGrid), GTK_WIDGET(gauge), 1, 0, 2, 2);
 
     label_Messages = gtk_label_new_with_mnemonic("Messages");
-    gtk_grid_attach(GTK_GRID(mainGrid), label_Messages, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(mainGrid), label_Messages, 0, 0, 1, 2);
 
     label_Time = gtk_label_new_with_mnemonic("Time");
     gtk_grid_attach(GTK_GRID(mainGrid), label_Time, 3, 0, 1, 1);
@@ -169,8 +189,6 @@ void *startGUI(void *ptr)
     label_Inverters_Errors_Value = gtk_label_new_with_mnemonic("---------");
     gtk_grid_attach(GTK_GRID(mainGrid), label_Inverters_Errors_Value, 3, 3, 1, 1);
 
-    GtkWidget *empty_0 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-    gtk_grid_attach(GTK_GRID(mainGrid), empty_0, 0, 1, 1, 1);
     GtkWidget *empty_1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
     gtk_grid_attach(GTK_GRID(mainGrid), empty_1, 3, 1, 1, 1);
 
@@ -178,6 +196,8 @@ void *startGUI(void *ptr)
 
     gtk_widget_show_all(window);
     gtk_main();
+
+    //end of gui
 
     printf("_______________________ END OF GUI THREAD _____________________________\n");
     pthread_exit(NULL);
@@ -220,6 +240,11 @@ static gboolean handleGui(gpointer userdata)
         updateAMSTemperatureGUI(id, len, dat);
     }
 
+    if (id == 0x44415348)
+    { //DASH
+        updateMessagesGUI(id, len, dat);
+    }
+
     free(dat);
     return G_SOURCE_REMOVE;
 }
@@ -255,12 +280,12 @@ void updateMotorGUI()
             rmpMoy += motors[i].rpm;
             if (motors[i].error_sincos)
             {
-                snprintf(tmpBuffer, sizeof(tmpBuffer), "err sincos motor %d\n", i);
+                snprintf(tmpBuffer, sizeof(tmpBuffer), "sincos : %d\n", i);
                 strcat(invertersErrorsBuffer, tmpBuffer);
             }
             if (motors[i].error_overspeed)
             {
-                snprintf(tmpBuffer, sizeof(tmpBuffer), "err overspeed motor %d\n", i);
+                snprintf(tmpBuffer, sizeof(tmpBuffer), "overspeed : %d\n", i);
                 strcat(invertersErrorsBuffer, tmpBuffer);
             }
         }
@@ -362,4 +387,32 @@ void updateTimerGUI(uint32_t id, size_t len, uint8_t *dat)
 {
     snprintf(tmpBuffer, sizeof(tmpBuffer), "%c%c%c%c%c%c%c%c", dat[0], dat[1], dat[2], dat[3], dat[4], dat[5], dat[6], dat[7]);
     gtk_label_set_text(GTK_LABEL(label_Time), tmpBuffer);
+}
+void updateMessagesGUI(uint32_t id, size_t len, uint8_t *dat)
+{
+    if (len <= LINE_MAX_LEN)
+    {
+        char *workingLine = messages.lines[messages.idx];
+
+        for (uint8_t i = 0; i < len; i++)
+        {
+            workingLine[i] = (char)dat[i];
+        }
+        workingLine[len] = '\0';
+
+        memset(tmpBuffer, 0, sizeof(tmpBuffer));
+
+        for (uint8_t i = 0; i < N_MESSAGES_LINES; i++)
+        {
+            strcat(tmpBuffer, messages.lines[i]);
+            if (i != N_MESSAGES_LINES - 1)
+                strcat(tmpBuffer, "\n");
+        }
+
+        gtk_label_set_text(GTK_LABEL(label_Messages), tmpBuffer);
+
+        messages.idx++;
+        if (messages.idx >= N_MESSAGES_LINES)
+            messages.idx = 0;
+    }
 }
