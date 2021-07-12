@@ -1,7 +1,7 @@
 #ifndef __GISAGAUGE_H__
 #define __GISAGAUGE_H__
 
-#include <gtk/gtk.h>
+#include <gtk-3.0/gtk/gtk.h>
 
 #include <cairo/cairo.h> //for drawing
 

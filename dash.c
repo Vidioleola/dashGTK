@@ -1,5 +1,7 @@
 #include <stdio.h>
-#include <gtk-3.0/gtk/gtk.h>
+#include <gtk/gtk.h>
+#include <cairo.h>
+#include <gdk/gdk.h>
 #include <pthread.h>
 #include <math.h>
 #include <string.h>
@@ -66,6 +68,7 @@ GtkWidget *mainGrid;
 GtkWidget *gauge;
 GtkWidget *label_Messages;
 GtkWidget *label_Time;
+GtkWidget *label_State;
 GtkWidget *label_Voltage;
 GtkWidget *label_Temperature;
 GtkWidget *label_Voltage_Value;
@@ -74,6 +77,9 @@ GtkWidget *label_AMS_Errors;
 GtkWidget *label_AMS_Errors_Value;
 GtkWidget *label_Inverters_Errors;
 GtkWidget *label_Inverters_Errors_Value;
+
+#define COLOR_RTD "rgba(20,20,20,255)"
+#define COLOR_NORMAL "rgba(100,100,100,255)"
 
 static gboolean handleGui(gpointer userdata);
 
@@ -86,7 +92,11 @@ void updateAMSErrorsGUI(uint32_t id, size_t len, uint8_t *dat);
 void updateAMSVoltageGUI(uint32_t id, size_t len, uint8_t *dat);
 void updateAMSTemperatureGUI(uint32_t id, size_t len, uint8_t *dat);
 void updateTimerGUI(uint32_t id, size_t len, uint8_t *dat);
+void updateStateGUI(uint32_t id, size_t len, uint8_t *dat);
+void updateCarSateGUI(uint32_t id, size_t len, uint8_t *dat);
 void updateMessagesGUI(uint32_t id, size_t len, uint8_t *dat);
+
+void changeColor(const char *colorDescriptor); //following GdkRGBA string
 
 bool rics_init(void)
 {
@@ -147,6 +157,8 @@ void *startGUI(void *ptr)
     gtk_window_set_title(GTK_WINDOW(window), "DASH FormUL 2021");
     g_signal_connect(window, "destroy", G_CALLBACK(on_window_main_destroy), NULL);
 
+
+
     mainGrid = gtk_grid_new();
     gtk_grid_set_column_homogeneous(GTK_GRID(mainGrid), TRUE);
     gtk_grid_set_row_homogeneous(GTK_GRID(mainGrid), TRUE);
@@ -189,10 +201,12 @@ void *startGUI(void *ptr)
     label_Inverters_Errors_Value = gtk_label_new_with_mnemonic("---------");
     gtk_grid_attach(GTK_GRID(mainGrid), label_Inverters_Errors_Value, 3, 3, 1, 1);
 
-    GtkWidget *empty_1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-    gtk_grid_attach(GTK_GRID(mainGrid), empty_1, 3, 1, 1, 1);
+    label_State = gtk_label_new_with_mnemonic("State");
+    gtk_grid_attach(GTK_GRID(mainGrid), label_State, 3, 1, 1, 1);
 
     gtk_container_add(GTK_CONTAINER(window), mainGrid);
+
+    changeColor(COLOR_NORMAL);
 
     gtk_widget_show_all(window);
     gtk_main();
@@ -228,6 +242,11 @@ static gboolean handleGui(gpointer userdata)
     if (id == 0x0000000C)
     {
         updateTimerGUI(id, len, dat);
+    }
+
+    if (id == 0x0000000D)
+    {
+        updateStateGUI(id, len, dat);
     }
 
     if ((id & 0xFFFF0000) == 0x02020000)
@@ -388,6 +407,19 @@ void updateTimerGUI(uint32_t id, size_t len, uint8_t *dat)
     snprintf(tmpBuffer, sizeof(tmpBuffer), "%c%c%c%c%c%c%c%c", dat[0], dat[1], dat[2], dat[3], dat[4], dat[5], dat[6], dat[7]);
     gtk_label_set_text(GTK_LABEL(label_Time), tmpBuffer);
 }
+void updateStateGUI(uint32_t id, size_t len, uint8_t *dat){
+    const gchar *stateStr = gtk_label_get_text(GTK_LABEL(label_State));
+    if(stateStr != NULL){
+        snprintf(tmpBuffer, sizeof(tmpBuffer), "%c%c%c%c%c%c%c%c", dat[0], dat[1], dat[2], dat[3], dat[4], dat[5], dat[6], dat[7]);
+        gtk_label_set_text(GTK_LABEL(label_State), tmpBuffer);
+
+        if(dat[0] == 'R'){
+            changeColor(COLOR_RTD);
+        }else{
+            changeColor(COLOR_NORMAL);
+        }
+    }
+}
 void updateMessagesGUI(uint32_t id, size_t len, uint8_t *dat)
 {
     if (len <= LINE_MAX_LEN)
@@ -415,4 +447,12 @@ void updateMessagesGUI(uint32_t id, size_t len, uint8_t *dat)
         if (messages.idx >= N_MESSAGES_LINES)
             messages.idx = 0;
     }
+}
+
+void changeColor(const char *colorDescriptor){
+    GdkRGBA color;
+
+    gdk_rgba_parse(&color, colorDescriptor);
+
+    gtk_widget_override_background_color(GTK_WIDGET(window), GTK_STATE_NORMAL, &color);
 }
